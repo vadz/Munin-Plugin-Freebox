@@ -60,6 +60,41 @@ use Munin::Plugin;
 
 my ($app_id, $app_version) = ('org.munin.plugin.freebox', '1.0');
 
+sub get_freebox {
+    if (!defined($ENV{app_token})) {
+        die <<EOF
+Use the following command:
+
+    freebox-authorize $app_id "Munin Freebox plugin" $app_version "Your server"
+
+to obtain the app token and add a section
+
+    [freebox_*]
+    env.app_token = value-of-the-token
+
+to use this plugin.
+EOF
+    }
+
+    use WebService::Freebox;
+    my $fb = WebService::Freebox->new(
+                    app_id => $app_id,
+                    app_version => $app_version,
+                    app_token => $ENV{app_token}
+                );
+
+    set_state_name('freebox_session');
+
+    my @state = restore_state();
+    my $session_token = $state[0] if @state;
+    $session_token = $fb->login($session_token);
+
+    save_state($session_token);
+
+    return $fb;
+}
+
+
 if (defined $ARGV[0] and $ARGV[0] eq 'autoconf') {
     my $error;
     if (!eval 'require WebService::Freebox;') {
@@ -79,7 +114,7 @@ if (defined $ARGV[0] and $ARGV[0] eq 'autoconf') {
 }
 
 
-my @modes = ('temp', 'bandwidth');
+my @modes = ('temp', 'bandwidth', 'freeplug', );
 
 if (defined $ARGV[0] and $ARGV[0] eq 'suggest') {
     print "$_\n" for @modes;
@@ -122,6 +157,19 @@ if (defined $ARGV[0] and $ARGV[0] eq 'config') {
                 print "${what}_${dir}.label $what $dir\n"
             }
         }
+    } elsif ($mode eq 'freeplug') {
+        print "graph_title Connection speed\n";
+        print "graph_vlabel Mbit / second\n";
+
+        my $fps = get_freebox()->get_all_freeplugs();
+        my $fpnum = 1;
+        for my $fp (@$fps) {
+            # Coordinator freeplugs don't have tx/rx stats anyhow.
+            next unless $fp->{net_role} eq 'sta';
+
+            print "freeplug${fpnum}_rx.label Receive speed for station $fpnum.\n";
+            print "freeplug${fpnum}_tx.label Transmit speed for station $fpnum.\n";
+        }
     }
 
     exit 0
@@ -129,35 +177,7 @@ if (defined $ARGV[0] and $ARGV[0] eq 'config') {
 
 die "Usage: $0 [autoconf|config]\n" if @ARGV;
 
-if (!defined($ENV{app_token})) {
-    die <<EOF
-Use the following command:
-
-    freebox-authorize $app_id "Munin Freebox plugin" $app_version "Your server"
-
-to obtain the app token and add a section
-
-    [freebox_*]
-    env.app_token = value-of-the-token
-
-to use this plugin.
-EOF
-}
-
-use WebService::Freebox;
-my $fb = WebService::Freebox->new(
-                app_id => $app_id,
-                app_version => $app_version,
-                app_token => $ENV{app_token}
-            );
-
-set_state_name('freebox_session');
-
-my @state = restore_state();
-my $session_token = $state[0] if @state;
-$session_token = $fb->login($session_token);
-
-save_state($session_token);
+my $fb = get_freebox();
 
 if ($mode eq 'temp') {
     my $sc = $fb->get_system_config();
@@ -171,6 +191,22 @@ if ($mode eq 'temp') {
 
         # Those are in bit/s, translate to bytes.
         print "bandwidth_$dir.value " . $cs->{"bandwidth_$dir"}/8 . "\n";
+    }
+} elsif ($mode eq 'freeplug') {
+    GET_FREEPLUGS: {
+        my $fps = get_freebox()->get_all_freeplugs();
+        my $fpnum = 1;
+        for my $fp (@$fps) {
+            next unless $fp->{net_role} eq 'sta';
+
+            # Freeplug stats are invalid if it's not used, so query it once
+            # again if it was inactive for some time, this is typically enough
+            # to wake it up and get something meaningful from it.
+            redo GET_FREEPLUGS if $fp->{rx_rate} == -1 or $fp->{tx_rate} == -1;
+
+            print "freeplug${fpnum}_rx.value " . $fp->{rx_rate} . "\n";
+            print "freeplug${fpnum}_tx.value " . $fp->{tx_rate} . "\n";
+        }
     }
 }
 
