@@ -101,9 +101,10 @@ my %temps = (
     );
 
 if (defined $ARGV[0] and $ARGV[0] eq 'config') {
+    print "graph_category freebox\n";
+
     if ($mode eq 'temp') {
         print "graph_args --base 1000 -l 0\n";
-        print "graph_category freebox\n";
         print "graph_title Freebox temperatures\n";
         print "graph_vlabel degrees Celsius\n";
 
@@ -113,7 +114,14 @@ if (defined $ARGV[0] and $ARGV[0] eq 'config') {
             print "$t.critical 90\n";
         }
     } elsif ($mode eq 'bandwidth') {
-        die "TODO";
+        print "graph_title Bandwidth\n";
+        print "graph_vlabel Byte / second\n";
+
+        for my $what (qw(bandwidth rate)) {
+            for my $dir (qw(up down)) {
+                print "${what}_${dir}.label $what $dir\n"
+            }
+        }
     }
 
     exit 0
@@ -157,7 +165,13 @@ if ($mode eq 'temp') {
         print "$t.value " . $sc->{"temp_$t"} . "\n";
     }
 } elsif ($mode eq 'bandwidth') {
-    die "TODO";
+    my $cs = $fb->get_connection_status();
+    for my $dir (qw(up down)) {
+        print "rate_$dir.value " . $cs->{"rate_$dir"} . "\n";
+
+        # Those are in bit/s, translate to bytes.
+        print "bandwidth_$dir.value " . $cs->{"bandwidth_$dir"}/8 . "\n";
+    }
 }
 
 exit 0
