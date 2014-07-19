@@ -1,0 +1,163 @@
+#!/usr/bin/env perl
+
+=head1 NAME
+
+freebox - Plugin for monitoring Freebox parameters.
+
+=head1 APPLICABLE SYSTEMS
+
+Any computer on the same LAN as a Freebox v6. Perl module L<WebService::Freebox>
+is required for this plugin to function and can be installed from CPAN.
+
+=head1 CONFIGURATION
+
+Prior to using this plugin, an authentication token allowing it connect to
+Freebox must be generated. Do this by running the following command:
+
+    freebox-authorize $app_id "Munin Freebox plugin" $app_version "Your server"
+
+to obtain the app token and add a section
+
+    [freebox_*]
+    env.app_token = value-of-the-token
+
+to the munin-node configuration file.
+
+=head1 USAGE
+
+This is a wildcard plugin which can be used to monitor several different
+families of Freebox parameters. Run it with C<suggest> command line argument
+to see all the possible operation modes and create a symlink called
+C<freebox_mode> to this plugin from the Munin plugins directory, e.g.
+C<freebox_temp>.
+
+=head1 AUTHOR
+
+Copyright 2014 Vadim Zeitlin <vz-cpan@zeitlins.org>
+
+=head1 LICENSE
+
+GPLv2
+
+=head1 HISTORY
+
+=over 4
+
+=item 2014-07-19 Initial version.
+
+=back
+
+=head1 MAGIC MARKERS
+
+ #%# family=manual
+ #%# capabilities=autoconf suggest
+
+=cut
+
+use strict;
+use warnings;
+use Munin::Plugin;
+
+my ($app_id, $app_version) = ('org.munin.plugin.freebox', '1.0');
+
+if (defined $ARGV[0] and $ARGV[0] eq 'autoconf') {
+    my $error;
+    if (!eval 'require WebService::Freebox;') {
+        $error = 'WebService::Freebox not found';
+    } else {
+        eval {
+            WebService::Freebox->new(
+                app_id => $app_id,
+                app_version => $app_version
+            );
+        };
+        $error = $@ if $@;
+    }
+
+    print defined $error ? "no ($error)\n" : "yes\n";
+    exit 0
+}
+
+
+my @modes = ('temp', 'bandwidth');
+
+if (defined $ARGV[0] and $ARGV[0] eq 'suggest') {
+    print "$_\n" for @modes;
+
+    exit 0
+}
+
+
+if ($0 !~ /freebox_(.+)*$/ or !grep $1, @modes) {
+    die "Must be called freebox_{" . join('|',@modes) . "}.\n"
+}
+
+my $mode = $1;
+
+my %temps = (
+        cpum => 'CPU (Marvell)',
+        cpub => 'CPU (Broadcom)',
+        sw   => 'Switch',
+    );
+
+if (defined $ARGV[0] and $ARGV[0] eq 'config') {
+    if ($mode eq 'temp') {
+        print "graph_args --base 1000 -l 0\n";
+        print "graph_category freebox\n";
+        print "graph_title Freebox temperatures\n";
+        print "graph_vlabel degrees Celsius\n";
+
+        for my $t (keys %temps) {
+            print "$t.label $temps{$t}\n";
+            print "$t.warning 80\n";
+            print "$t.critical 90\n";
+        }
+    } elsif ($mode eq 'bandwidth') {
+        die "TODO";
+    }
+
+    exit 0
+}
+
+die "Usage: $0 [autoconf|config]\n" if @ARGV;
+
+if (!defined($ENV{app_token})) {
+    die <<EOF
+Use the following command:
+
+    freebox-authorize $app_id "Munin Freebox plugin" $app_version "Your server"
+
+to obtain the app token and add a section
+
+    [freebox_*]
+    env.app_token = value-of-the-token
+
+to use this plugin.
+EOF
+}
+
+use WebService::Freebox;
+my $fb = WebService::Freebox->new(
+                app_id => $app_id,
+                app_version => $app_version,
+                app_token => $ENV{app_token}
+            );
+
+set_state_name('freebox_session');
+
+my @state = restore_state();
+my $session_token = $state[0] if @state;
+$session_token = $fb->login($session_token);
+
+save_state($session_token);
+
+if ($mode eq 'temp') {
+    my $sc = $fb->get_system_config();
+    for my $t (keys %temps) {
+        print "$t.value " . $sc->{"temp_$t"} . "\n";
+    }
+} elsif ($mode eq 'bandwidth') {
+    die "TODO";
+}
+
+exit 0
