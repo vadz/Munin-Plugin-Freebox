@@ -162,13 +162,20 @@ if (defined $ARGV[0] and $ARGV[0] eq 'config') {
         print "graph_vlabel Mbit / second\n";
 
         my $fps = get_freebox()->get_all_freeplugs();
-        my $fpnum = 1;
-        for my $fp (@$fps) {
-            # Coordinator freeplugs don't have tx/rx stats anyhow.
-            next unless $fp->{net_role} eq 'sta';
 
-            print "freeplug${fpnum}_rx.label receive speed for station $fpnum\n";
-            print "freeplug${fpnum}_tx.label transmit speed for station $fpnum\n";
+        # Take just the stations as coordinator freeplugs don't have tx/rx stats.
+        my @stations = grep { $_->{net_role} eq 'sta' } @$fps;
+
+        if (@stations <= 1) {
+            print "freeplug_rx.label receive speed\n";
+            print "freeplug_tx.label transmit speed\n";
+        } else {
+            # If we have more than one station, number them to allow
+            # distinguishing between them.
+            for (my $fpnum = 1; $fpnum <= @stations; $fpnum++) {
+                print "freeplug${fpnum}_rx.label receive speed for station $fpnum\n";
+                print "freeplug${fpnum}_tx.label transmit speed for station $fpnum\n";
+            }
         }
     }
 
@@ -195,17 +202,28 @@ if ($mode eq 'temp') {
 } elsif ($mode eq 'freeplug') {
     GET_FREEPLUGS: {
         my $fps = get_freebox()->get_all_freeplugs();
-        my $fpnum = 1;
-        for my $fp (@$fps) {
-            next unless $fp->{net_role} eq 'sta';
 
-            # Freeplug stats are invalid if it's not used, so query it once
-            # again if it was inactive for some time, this is typically enough
-            # to wake it up and get something meaningful from it.
-            redo GET_FREEPLUGS if $fp->{rx_rate} == -1 or $fp->{tx_rate} == -1;
+        my @stations = grep { $_->{net_role} eq 'sta' } @$fps;
 
-            print "freeplug${fpnum}_rx.value " . $fp->{rx_rate} . "\n";
-            print "freeplug${fpnum}_tx.value " . $fp->{tx_rate} . "\n";
+        last if !@stations;
+
+        # Freeplug stats are invalid if it's not used, so query it once
+        # again if it was inactive for some time, this is typically enough
+        # to wake it up and get something meaningful from it.
+        my $fp = $stations[0];
+        redo GET_FREEPLUGS if $fp->{rx_rate} == -1 or $fp->{tx_rate} == -1;
+
+        if (@stations == 1) {
+            print "freeplug_rx.value " . $fp->{rx_rate} . "\n";
+            print "freeplug_tx.value " . $fp->{tx_rate} . "\n";
+        } else {
+            my $fpnum = 1;
+            for $fp (@stations) {
+                print "freeplug${fpnum}_rx.value " . $fp->{rx_rate} . "\n";
+                print "freeplug${fpnum}_tx.value " . $fp->{tx_rate} . "\n";
+
+                $fpnum++;
+            }
         }
     }
 }
